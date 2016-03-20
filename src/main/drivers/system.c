@@ -47,7 +47,7 @@ void registerExti15_10_CallbackHandler(extiCallbackHandler *fn)
             return;
         }
     }
-    failureMode(FAILURE_DEVELOPER); // EXTI15_10_CALLBACK_HANDLER_COUNT is too low for the amount of handlers required.
+    failureMode(15); // EXTI15_10_CALLBACK_HANDLER_COUNT is too low for the amount of handlers required.
 }
 
 void unregisterExti15_10_CallbackHandler(extiCallbackHandler *fn)
@@ -99,12 +99,6 @@ uint32_t micros(void)
     do {
         ms = sysTickUptime;
         cycle_cnt = SysTick->VAL;
-
-        /*
-         * If the SysTick timer expired during the previous instruction, we need to give it a little time for that
-         * interrupt to be delivered before we can recheck sysTickUptime:
-         */
-        asm volatile("\tnop\n");
     } while (ms != sysTickUptime);
     return (ms * 1000) + (usTicks * 1000 - cycle_cnt) / usTicks;
 }
@@ -133,6 +127,15 @@ void systemInit(void)
 
     // cache RCC->CSR value to use it in isMPUSoftreset() and others
     cachedRccCsrValue = RCC->CSR;
+#ifdef STM32F40_41xxx
+    /* Accounts for OP Bootloader, set the Vector Table base address as specified in .ld file */
+    extern void *isr_vector_table_base;
+
+    NVIC_SetVectorTable((uint32_t)&isr_vector_table_base, 0x0);
+
+    RCC_AHB2PeriphClockCmd( RCC_AHB2Periph_OTG_FS, DISABLE);
+#endif
+
     RCC_ClearFlag();
 
 
@@ -194,49 +197,21 @@ void delay(uint32_t ms)
         delayMicroseconds(1000);
 }
 
-#define SHORT_FLASH_DURATION 50
-#define CODE_FLASH_DURATION 250
-
-void failureMode(failureMode_e mode)
+// FIXME replace mode with an enum so usage can be tracked, currently mode is a magic number
+void failureMode(uint8_t mode)
 {
-    int codeRepeatsRemaining = 10;
-    int codeFlashesRemaining;
-    int shortFlashesRemaining;
+    uint8_t flashesRemaining = 10;
 
-    while (codeRepeatsRemaining--) {
-        LED1_ON;
-        LED0_OFF;
-        shortFlashesRemaining = 5;
-        codeFlashesRemaining = mode + 1;
-        uint8_t flashDuration = SHORT_FLASH_DURATION;
-
-        while (shortFlashesRemaining || codeFlashesRemaining) {
-            LED1_TOGGLE;
-            LED0_TOGGLE;
-            BEEP_ON;
-            delay(flashDuration);
-
-            LED1_TOGGLE;
-            LED0_TOGGLE;
-            BEEP_OFF;
-            delay(flashDuration);
-
-            if (shortFlashesRemaining) {
-                shortFlashesRemaining--;
-                if (shortFlashesRemaining == 0) {
-                    delay(500);
-                    flashDuration = CODE_FLASH_DURATION;
-                }
-            } else {
-                codeFlashesRemaining--;
-            }
-        }
-        delay(1000);
+    LED1_ON;
+    LED0_OFF;
+    while (flashesRemaining--) {
+        LED1_TOGGLE;
+        LED0_TOGGLE;
+        delay(475 * mode - 2);
+        BEEP_ON;
+        delay(25);
+        BEEP_OFF;
     }
 
-#ifdef DEBUG
-    systemReset();
-#else
     systemResetToBootloader();
-#endif
 }

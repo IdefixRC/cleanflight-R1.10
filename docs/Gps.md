@@ -157,7 +157,7 @@ Module | Comments
 -------|--------
 U-blox Neo-7M w/Compass | [HobbyKing](http://www.hobbyking.com/hobbyking/store/__55558__Ublox_Neo_7M_GPS_with_Compass_and_Pedestal_Mount.html)
 
-#### NEO-6
+#### NEO-7
 Module | Comments
 -------|--------
 Ublox NEO-6M GPS with Compass | [eBay](http://www.ebay.com/itm/111585855757)

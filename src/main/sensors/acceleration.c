@@ -171,9 +171,7 @@ void applyAccelerationTrims(flightDynamicsTrims_t *accelerationTrims)
 
 void updateAccelerationReadings(rollAndPitchTrims_t *rollAndPitchTrims)
 {
-    if (!acc.read(accADC)) {
-        return;
-    }
+    acc.read(accADC);
     alignSensors(accADC, accADC, accAlign);
 
     if (!isAccelerationCalibrationComplete()) {

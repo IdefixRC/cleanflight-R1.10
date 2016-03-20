@@ -20,7 +20,6 @@
 #include <stdlib.h>
 
 #include "platform.h"
-#include "debug.h"
 
 #include "drivers/gpio.h"
 #include "drivers/system.h"
@@ -102,10 +101,8 @@ static void spektrumDataReceive(uint16_t c)
     spekTime = micros();
     spekTimeInterval = spekTime - spekTimeLast;
     spekTimeLast = spekTime;
-    if (spekTimeInterval > 5000) {
+    if (spekTimeInterval > 5000)
         spekFramePosition = 0;
-    }
-
     spekFrame[spekFramePosition] = (uint8_t)c;
     if (spekFramePosition == SPEK_FRAME_SIZE - 1) {
         rcFrameComplete = true;

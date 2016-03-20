@@ -656,7 +656,7 @@ void applyLedWarningLayer(uint8_t updateNow)
 
     if (updateNow && warningFlashCounter == 0) {
         warningFlags = WARNING_FLAG_NONE;
-        if (feature(FEATURE_VBAT) && getBatteryState() != BATTERY_OK) {
+        if (feature(FEATURE_VBAT) && calculateBatteryState() != BATTERY_OK) {
             warningFlags |= WARNING_FLAG_LOW_BATTERY;
         }
         if (feature(FEATURE_FAILSAFE) && failsafeIsActive()) {
@@ -825,14 +825,13 @@ void applyLedThrustRingLayer(void)
 }
 
 #ifdef USE_LED_ANIMATION
-static uint8_t previousRow;
-static uint8_t currentRow;
-static uint8_t nextRow;
-
 void updateLedAnimationState(void)
 {
     static uint8_t frameCounter = 0;
 
+    static uint8_t previousRow;
+    static uint8_t currentRow;
+    static uint8_t nextRow;
     uint8_t animationFrames = ledGridHeight;
 
     previousRow = (frameCounter + animationFrames - 1) % animationFrames;
@@ -856,13 +855,13 @@ static void applyLedAnimationLayer(void)
         ledConfig = &ledConfigs[ledIndex];
 
         if (GET_LED_Y(ledConfig) == previousRow) {
-            setLedHsv(ledIndex, &hsv_white);
-            scaleLedValue(ledIndex, 50);
+            setLedHsv(ledIndex, &white);
+            setLedBrightness(ledIndex, 50);
 
         } else if (GET_LED_Y(ledConfig) == currentRow) {
-            setLedHsv(ledIndex, &hsv_white);
+            setLedHsv(ledIndex, &white);
         } else if (GET_LED_Y(ledConfig) == nextRow) {
-            scaleLedValue(ledIndex, 50);
+            setLedBrightness(ledIndex, 50);
         }
     }
 }

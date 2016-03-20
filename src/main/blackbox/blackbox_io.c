@@ -27,6 +27,7 @@
 #include "sensors/boardalignment.h"
 #include "sensors/acceleration.h"
 #include "sensors/barometer.h"
+#include "sensors/pitotmeter.h"
 #include "sensors/gyro.h"
 #include "sensors/battery.h"
 
@@ -152,20 +153,6 @@ void blackboxWriteSignedVB(int32_t value)
 {
     //ZigZag encode to make the value always positive
     blackboxWriteUnsignedVB(zigzagEncode(value));
-}
-
-void blackboxWriteSignedVBArray(int32_t *array, int count)
-{
-    for (int i = 0; i < count; i++) {
-        blackboxWriteSignedVB(array[i]);
-    }
-}
-
-void blackboxWriteSigned16VBArray(int16_t *array, int count)
-{
-    for (int i = 0; i < count; i++) {
-        blackboxWriteSignedVB(array[i]);
-    }
 }
 
 void blackboxWriteS16(int16_t value)
@@ -419,21 +406,6 @@ void blackboxWriteTag8_8SVB(int32_t *values, int valueCount)
             }
         }
     }
-}
-
-/** Write unsigned integer **/
-void blackboxWriteU32(int32_t value)
-{
-    blackboxWrite(value & 0xFF);
-    blackboxWrite((value >> 8) & 0xFF);
-    blackboxWrite((value >> 16) & 0xFF);
-    blackboxWrite((value >> 24) & 0xFF);
-}
-
-/** Write float value in the integer form **/
-void blackboxWriteFloat(float value)
-{
-    blackboxWriteU32(castFloatBytesToInt(value));
 }
 
 /**

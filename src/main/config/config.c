@@ -41,6 +41,7 @@
 #include "sensors/compass.h"
 #include "sensors/acceleration.h"
 #include "sensors/barometer.h"
+#include "sensors/pitotmeter.h"
 #include "sensors/boardalignment.h"
 #include "sensors/battery.h"
 
@@ -75,7 +76,7 @@
 
 void useRcControlsConfig(modeActivationCondition_t *modeActivationConditions, escAndServoConfig_t *escAndServoConfigToUse, pidProfile_t *pidProfileToUse);
 
-#define FLASH_TO_RESERVE_FOR_CONFIG 0x800
+#define FLASH_TO_RESERVE_FOR_CONFIG 0x1000
 
 #if !defined(FLASH_SIZE)
 #error "Flash size not defined for target. (specify in KB)"
@@ -94,6 +95,10 @@ void useRcControlsConfig(modeActivationCondition_t *modeActivationConditions, es
     #ifdef STM32F10X_HD
         #define FLASH_PAGE_SIZE                 ((uint16_t)0x800)
     #endif
+
+    #ifdef STM32F40_41xxx
+        #define FLASH_PAGE_SIZE                 ((uint32_t)0x20000)
+    #endif
 #endif
 
 #if !defined(FLASH_SIZE) && !defined(FLASH_PAGE_COUNT)
@@ -107,7 +112,11 @@ void useRcControlsConfig(modeActivationCondition_t *modeActivationConditions, es
 #endif
 
 #if defined(FLASH_SIZE)
-#define FLASH_PAGE_COUNT ((FLASH_SIZE * 0x400) / FLASH_PAGE_SIZE)
+#ifdef STM32F40_41xxx
+    #define FLASH_PAGE_COUNT 8 // just to make calculations work
+#else
+	#define FLASH_PAGE_COUNT ((FLASH_SIZE * 0x400) / FLASH_PAGE_SIZE)
+#endif
 #endif
 
 #if !defined(FLASH_PAGE_SIZE)
@@ -128,7 +137,7 @@ static uint32_t activeFeaturesLatch = 0;
 static uint8_t currentControlRateProfileIndex = 0;
 controlRateConfig_t *currentControlRateProfile;
 
-static const uint8_t EEPROM_CONF_VERSION = 105;
+static const uint8_t EEPROM_CONF_VERSION = 103;
 
 static void resetAccelerometerTrims(flightDynamicsTrims_t *accelerometerTrims)
 {
@@ -175,15 +184,15 @@ static void resetPidProfile(pidProfile_t *pidProfile)
     pidProfile->pterm_cut_hz = 0;
     pidProfile->gyro_cut_hz = 0;
 
-    pidProfile->P_f[ROLL] = 1.5f;     // new PID with preliminary defaults test carefully
-    pidProfile->I_f[ROLL] = 0.4f;
-    pidProfile->D_f[ROLL] = 0.03f;
-    pidProfile->P_f[PITCH] = 1.5f;
-    pidProfile->I_f[PITCH] = 0.4f;
-    pidProfile->D_f[PITCH] = 0.03f;
-    pidProfile->P_f[YAW] = 2.5f;
-    pidProfile->I_f[YAW] = 1.0f;
-    pidProfile->D_f[YAW] = 0.00f;
+    pidProfile->P_f[ROLL] = 2.5f;     // new PID with preliminary defaults test carefully
+    pidProfile->I_f[ROLL] = 0.6f;
+    pidProfile->D_f[ROLL] = 0.06f;
+    pidProfile->P_f[PITCH] = 2.5f;
+    pidProfile->I_f[PITCH] = 0.6f;
+    pidProfile->D_f[PITCH] = 0.06f;
+    pidProfile->P_f[YAW] = 8.0f;
+    pidProfile->I_f[YAW] = 0.5f;
+    pidProfile->D_f[YAW] = 0.05f;
     pidProfile->A_level = 5.0f;
     pidProfile->H_level = 3.0f;
     pidProfile->H_sensitivity = 75;
@@ -199,6 +208,18 @@ void resetGpsProfile(gpsProfile_t *gpsProfile)
     gpsProfile->nav_speed_min = 100;
     gpsProfile->nav_speed_max = 300;
     gpsProfile->ap_mode = 40;
+
+
+    // fw stuff
+    gpsProfile->fw_gps_maxcorr = 20;
+    gpsProfile->fw_gps_rudder = 15;
+    gpsProfile->fw_gps_maxclimb = 15;
+    gpsProfile->fw_gps_maxdive = 15;
+    gpsProfile->fw_climb_throttle = 1900;
+    gpsProfile->fw_cruise_throttle = 1500;
+    gpsProfile->fw_idle_throttle = 1300;
+    gpsProfile->fw_scaler_throttle = 8;
+    gpsProfile->fw_roll_comp = 1;
 }
 #endif
 
@@ -208,6 +229,13 @@ void resetBarometerConfig(barometerConfig_t *barometerConfig)
     barometerConfig->baro_noise_lpf = 0.6f;
     barometerConfig->baro_cf_vel = 0.985f;
     barometerConfig->baro_cf_alt = 0.965f;
+}
+
+void resetPitotmeterConfig(pitotmeterConfig_t *pitotmeterConfig)
+{
+	pitotmeterConfig->pitot_sample_count = 21;
+	pitotmeterConfig->pitot_noise_lpf = 0.6f;
+	pitotmeterConfig->pitot_scale = 1.00f;
 }
 
 void resetSensorAlignment(sensorAlignmentConfig_t *sensorAlignmentConfig)
@@ -248,8 +276,6 @@ void resetTelemetryConfig(telemetryConfig_t *telemetryConfig)
 void resetBatteryConfig(batteryConfig_t *batteryConfig)
 {
     batteryConfig->vbatscale = VBAT_SCALE_DEFAULT;
-    batteryConfig->vbatresdivval = VBAT_RESDIVVAL_DEFAULT;
-    batteryConfig->vbatresdivmultiplier = VBAT_RESDIVMULTIPLIER_DEFAULT;
     batteryConfig->vbatmaxcellvoltage = 43;
     batteryConfig->vbatmincellvoltage = 33;
     batteryConfig->vbatwarningcellvoltage = 35;
@@ -314,7 +340,7 @@ void resetRcControlsConfig(rcControlsConfig_t *rcControlsConfig) {
 
 void resetMixerConfig(mixerConfig_t *mixerConfig) {
     mixerConfig->pid_at_min_throttle = 1;
-    mixerConfig->yaw_motor_direction = 1;
+    mixerConfig->yaw_direction = 1;
     mixerConfig->yaw_jump_prevention_limit = 200;
 #ifdef USE_SERVOS
     mixerConfig->tri_unarmed_servo = 1;
@@ -348,15 +374,14 @@ static void setControlRateProfile(uint8_t profileIndex)
     currentControlRateProfile = &masterConfig.controlRateProfiles[profileIndex];
 }
 
-uint16_t getCurrentMinthrottle(void)
-{
-    return masterConfig.escAndServoConfig.minthrottle;
-}
-
 // Default settings
 static void resetConf(void)
 {
     int i;
+#ifdef USE_SERVOS
+    int8_t servoRates[MAX_SUPPORTED_SERVOS] = { 30, 30, 100, 100, 100, 100, 100, 100 };
+    ;
+#endif
 
     // Clear all configuration
     memset(&masterConfig, 0, sizeof(master_t));
@@ -366,7 +391,7 @@ static void resetConf(void)
     masterConfig.version = EEPROM_CONF_VERSION;
     masterConfig.mixerMode = MIXER_QUADX;
     featureClearAll();
-#if defined(CJMCU) || defined(SPARKY) || defined(COLIBRI_RACE)
+#if defined(CJMCU) || defined(SPARKY)
     featureSet(FEATURE_RX_PPM);
 #endif
 
@@ -397,7 +422,6 @@ static void resetConf(void)
     masterConfig.gyroConfig.gyroMovementCalibrationThreshold = 32;
 
     masterConfig.mag_hardware = MAG_DEFAULT;     // default/autodetect
-    masterConfig.baro_hardware = BARO_DEFAULT;   // default/autodetect
 
     resetBatteryConfig(&masterConfig.batteryConfig);
 
@@ -408,21 +432,12 @@ static void resetConf(void)
     masterConfig.rxConfig.midrc = 1500;
     masterConfig.rxConfig.mincheck = 1100;
     masterConfig.rxConfig.maxcheck = 1900;
-    masterConfig.rxConfig.rx_min_usec = 885;          // any of first 4 channels below this value will trigger rx loss detection
+    masterConfig.rxConfig.rx_min_usec = 985;          // any of first 4 channels below this value will trigger rx loss detection
     masterConfig.rxConfig.rx_max_usec = 2115;         // any of first 4 channels above this value will trigger rx loss detection
-
-    for (i = 0; i < MAX_SUPPORTED_RC_CHANNEL_COUNT; i++) {
-        rxFailsafeChannelConfiguration_t *channelFailsafeConfiguration = &masterConfig.rxConfig.failsafe_channel_configurations[i];
-        channelFailsafeConfiguration->mode = (i < NON_AUX_CHANNEL_COUNT) ? RX_FAILSAFE_MODE_AUTO : RX_FAILSAFE_MODE_HOLD;
-        channelFailsafeConfiguration->step = (i == THROTTLE) ? CHANNEL_VALUE_TO_RXFAIL_STEP(masterConfig.rxConfig.rx_min_usec) : CHANNEL_VALUE_TO_RXFAIL_STEP(masterConfig.rxConfig.midrc);
-    }
 
     masterConfig.rxConfig.rssi_channel = 0;
     masterConfig.rxConfig.rssi_scale = RSSI_SCALE_DEFAULT;
     masterConfig.rxConfig.rssi_ppm_invert = 0;
-    masterConfig.rxConfig.rcSmoothing = 1;
-
-    resetAllRxChannelRangeConfigurations(masterConfig.rxConfig.channelRanges);
 
     masterConfig.inputFilteringMode = INPUT_FILTERING_DISABLED;
 
@@ -433,6 +448,7 @@ static void resetConf(void)
 
     resetMixerConfig(&masterConfig.mixerConfig);
 
+    masterConfig.airplaneConfig.flaps_speed = 0;
     masterConfig.airplaneConfig.fixedwing_althold_dir = 1;
 
     // Motor/ESC/Servo
@@ -475,6 +491,7 @@ static void resetConf(void)
     currentProfile->accDeadband.z = 40;
 
     resetBarometerConfig(&currentProfile->barometerConfig);
+    resetPitotmeterConfig(&currentProfile->pitotmeterConfig);
 
     currentProfile->acc_unarmedcal = 1;
 
@@ -490,8 +507,6 @@ static void resetConf(void)
     masterConfig.failsafeConfig.failsafe_delay = 10;              // 1sec
     masterConfig.failsafeConfig.failsafe_off_delay = 200;         // 20sec
     masterConfig.failsafeConfig.failsafe_throttle = 1000;         // default throttle off.
-    masterConfig.failsafeConfig.failsafe_kill_switch = 0;         // default failsafe switch action is identical to rc link loss
-    masterConfig.failsafeConfig.failsafe_throttle_low_delay = 100; // default throttle low delay for "just disarm" on failsafe condition
 
 #ifdef USE_SERVOS
     // servos
@@ -499,14 +514,14 @@ static void resetConf(void)
         currentProfile->servoConf[i].min = DEFAULT_SERVO_MIN;
         currentProfile->servoConf[i].max = DEFAULT_SERVO_MAX;
         currentProfile->servoConf[i].middle = DEFAULT_SERVO_MIDDLE;
-        currentProfile->servoConf[i].rate = 100;
+        currentProfile->servoConf[i].rate = servoRates[i];
         currentProfile->servoConf[i].angleAtMin = DEFAULT_SERVO_MIN_ANGLE;
         currentProfile->servoConf[i].angleAtMax = DEFAULT_SERVO_MAX_ANGLE;
         currentProfile->servoConf[i].forwardFromChannel = CHANNEL_FORWARDING_DISABLED;
     }
 
     // gimbal
-    currentProfile->gimbalConfig.mode = GIMBAL_MODE_NORMAL;
+    currentProfile->gimbalConfig.gimbal_flags = GIMBAL_NORMAL;
 #endif
 
 #ifdef GPS
@@ -515,7 +530,7 @@ static void resetConf(void)
 
     // custom mixer. clear by defaults.
     for (i = 0; i < MAX_SUPPORTED_MOTORS; i++)
-        masterConfig.customMotorMixer[i].throttle = 0.0f;
+        masterConfig.customMixer[i].throttle = 0.0f;
 
 #ifdef LED_STRIP
     applyDefaultColors(masterConfig.colors, CONFIGURABLE_COLOR_COUNT);
@@ -560,53 +575,53 @@ static void resetConf(void)
     currentControlRateProfile->rates[FD_YAW] = 100;
     parseRcChannels("TAER1234", &masterConfig.rxConfig);
 
-    //  { 1.0f, -0.414178f,  1.0f, -1.0f },          // REAR_R
-    masterConfig.customMotorMixer[0].throttle = 1.0f;
-    masterConfig.customMotorMixer[0].roll = -0.414178f;
-    masterConfig.customMotorMixer[0].pitch = 1.0f;
-    masterConfig.customMotorMixer[0].yaw = -1.0f;
+    //  { 1.0f, -0.5f,  1.0f, -1.0f },          // REAR_R
+    masterConfig.customMixer[0].throttle = 1.0f;
+    masterConfig.customMixer[0].roll = -0.5f;
+    masterConfig.customMixer[0].pitch = 1.0f;
+    masterConfig.customMixer[0].yaw = -1.0f;
 
-    //  { 1.0f, -0.414178f, -1.0f,  1.0f },          // FRONT_R
-    masterConfig.customMotorMixer[1].throttle = 1.0f;
-    masterConfig.customMotorMixer[1].roll = -0.414178f;
-    masterConfig.customMotorMixer[1].pitch = -1.0f;
-    masterConfig.customMotorMixer[1].yaw = 1.0f;
+    //  { 1.0f, -0.5f, -1.0f,  1.0f },          // FRONT_R
+    masterConfig.customMixer[1].throttle = 1.0f;
+    masterConfig.customMixer[1].roll = -0.5f;
+    masterConfig.customMixer[1].pitch = -1.0f;
+    masterConfig.customMixer[1].yaw = 1.0f;
 
-    //  { 1.0f,  0.414178f,  1.0f,  1.0f },          // REAR_L
-    masterConfig.customMotorMixer[2].throttle = 1.0f;
-    masterConfig.customMotorMixer[2].roll = 0.414178f;
-    masterConfig.customMotorMixer[2].pitch = 1.0f;
-    masterConfig.customMotorMixer[2].yaw = 1.0f;
+    //  { 1.0f,  0.5f,  1.0f,  1.0f },          // REAR_L
+    masterConfig.customMixer[2].throttle = 1.0f;
+    masterConfig.customMixer[2].roll = 0.5f;
+    masterConfig.customMixer[2].pitch = 1.0f;
+    masterConfig.customMixer[2].yaw = 1.0f;
 
-    //  { 1.0f,  0.414178f, -1.0f, -1.0f },          // FRONT_L
-    masterConfig.customMotorMixer[3].throttle = 1.0f;
-    masterConfig.customMotorMixer[3].roll = 0.414178f;
-    masterConfig.customMotorMixer[3].pitch = -1.0f;
-    masterConfig.customMotorMixer[3].yaw = -1.0f;
+    //  { 1.0f,  0.5f, -1.0f, -1.0f },          // FRONT_L
+    masterConfig.customMixer[3].throttle = 1.0f;
+    masterConfig.customMixer[3].roll = 0.5f;
+    masterConfig.customMixer[3].pitch = -1.0f;
+    masterConfig.customMixer[3].yaw = -1.0f;
 
-    //  { 1.0f, -1.0f, -0.414178f, -1.0f },          // MIDFRONT_R
-    masterConfig.customMotorMixer[4].throttle = 1.0f;
-    masterConfig.customMotorMixer[4].roll = -1.0f;
-    masterConfig.customMotorMixer[4].pitch = -0.414178f;
-    masterConfig.customMotorMixer[4].yaw = -1.0f;
+    //  { 1.0f, -1.0f, -0.5f, -1.0f },          // MIDFRONT_R
+    masterConfig.customMixer[4].throttle = 1.0f;
+    masterConfig.customMixer[4].roll = -1.0f;
+    masterConfig.customMixer[4].pitch = -0.5f;
+    masterConfig.customMixer[4].yaw = -1.0f;
 
-    //  { 1.0f,  1.0f, -0.414178f,  1.0f },          // MIDFRONT_L
-    masterConfig.customMotorMixer[5].throttle = 1.0f;
-    masterConfig.customMotorMixer[5].roll = 1.0f;
-    masterConfig.customMotorMixer[5].pitch = -0.414178f;
-    masterConfig.customMotorMixer[5].yaw = 1.0f;
+    //  { 1.0f,  1.0f, -0.5f,  1.0f },          // MIDFRONT_L
+    masterConfig.customMixer[5].throttle = 1.0f;
+    masterConfig.customMixer[5].roll = 1.0f;
+    masterConfig.customMixer[5].pitch = -0.5f;
+    masterConfig.customMixer[5].yaw = 1.0f;
 
-    //  { 1.0f, -1.0f,  0.414178f,  1.0f },          // MIDREAR_R
-    masterConfig.customMotorMixer[6].throttle = 1.0f;
-    masterConfig.customMotorMixer[6].roll = -1.0f;
-    masterConfig.customMotorMixer[6].pitch = 0.414178f;
-    masterConfig.customMotorMixer[6].yaw = 1.0f;
+    //  { 1.0f, -1.0f,  0.5f,  1.0f },          // MIDREAR_R
+    masterConfig.customMixer[6].throttle = 1.0f;
+    masterConfig.customMixer[6].roll = -1.0f;
+    masterConfig.customMixer[6].pitch = 0.5f;
+    masterConfig.customMixer[6].yaw = 1.0f;
 
-    //  { 1.0f,  1.0f,  0.414178f, -1.0f },          // MIDREAR_L
-    masterConfig.customMotorMixer[7].throttle = 1.0f;
-    masterConfig.customMotorMixer[7].roll = 1.0f;
-    masterConfig.customMotorMixer[7].pitch = 0.414178f;
-    masterConfig.customMotorMixer[7].yaw = -1.0f;
+    //  { 1.0f,  1.0f,  0.5f, -1.0f },          // MIDREAR_L
+    masterConfig.customMixer[7].throttle = 1.0f;
+    masterConfig.customMixer[7].roll = 1.0f;
+    masterConfig.customMixer[7].pitch = 0.5f;
+    masterConfig.customMixer[7].yaw = -1.0f;
 #endif
 
     // copy first profile into remaining profile
@@ -729,6 +744,9 @@ void activateConfig(void)
 #ifdef BARO
     useBarometerConfig(&currentProfile->barometerConfig);
 #endif
+#ifdef PITOT
+    usePitotmeterConfig(&currentProfile->pitotmeterConfig);
+#endif
 }
 
 void validateAndFixConfig(void)
@@ -805,11 +823,6 @@ void validateAndFixConfig(void)
     }
 #endif
 
-#ifdef STM32F303xC
-    // hardware supports serial port inversion, make users life easier for those that want to connect SBus RX's
-    masterConfig.telemetryConfig.telemetry_inversion = 1;
-#endif
-
     /*
      * The retarded_arm setting is incompatible with pid_at_min_throttle because full roll causes the craft to roll over on the ground.
      * The pid_at_min_throttle implementation ignores yaw on the ground, but doesn't currently ignore roll when retarded_arm is enabled.
@@ -841,9 +854,7 @@ void readEEPROM(void)
 {
     // Sanity check
     if (!isEEPROMContentValid())
-        failureMode(FAILURE_INVALID_EEPROM_CONTENTS);
-
-    suspendRxSignal();
+        failureMode(10);
 
     // Read flash
     memcpy(&masterConfig, (char *) CONFIG_START_FLASH_ADDRESS, sizeof(master_t));
@@ -860,8 +871,6 @@ void readEEPROM(void)
 
     validateAndFixConfig();
     activateConfig();
-
-    resumeRxSignal();
 }
 
 void readEEPROMAndNotify(void)
@@ -879,8 +888,6 @@ void writeEEPROM(void)
     FLASH_Status status = 0;
     uint32_t wordOffset;
     int8_t attemptsRemaining = 3;
-
-    suspendRxSignal();
 
     // prepare checksum/version constants
     masterConfig.version = EEPROM_CONF_VERSION;
@@ -901,7 +908,11 @@ void writeEEPROM(void)
 #endif
         for (wordOffset = 0; wordOffset < sizeof(master_t); wordOffset += 4) {
             if (wordOffset % FLASH_PAGE_SIZE == 0) {
+#ifdef STM32F40_41xxx
+            	status = FLASH_EraseSector(FLASH_Sector_11, VoltageRange_3);
+#else
                 status = FLASH_ErasePage(CONFIG_START_FLASH_ADDRESS + wordOffset);
+#endif
                 if (status != FLASH_COMPLETE) {
                     break;
                 }
@@ -921,10 +932,8 @@ void writeEEPROM(void)
 
     // Flash write failed - just die now
     if (status != FLASH_COMPLETE || !isEEPROMContentValid()) {
-        failureMode(FAILURE_FLASH_WRITE_FAILED);
+        failureMode(10);
     }
-
-    resumeRxSignal();
 }
 
 void ensureEEPROMContainsValidData(void)

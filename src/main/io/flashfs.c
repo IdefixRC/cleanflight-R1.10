@@ -49,6 +49,8 @@ static uint8_t bufferHead = 0, bufferTail = 0;
 
 // The position of the buffer's tail in the overall flash address space:
 static uint32_t tailAddress = 0;
+// The index of the tail within the flash page it is inside
+static uint16_t tailIndexInPage = 0;
 
 static void flashfsClearBuffer()
 {
@@ -63,6 +65,10 @@ static bool flashfsBufferIsEmpty()
 static void flashfsSetTailAddress(uint32_t address)
 {
     tailAddress = address;
+
+    if (m25p16_getGeometry()->pageSize > 0) {
+        tailIndexInPage = tailAddress % m25p16_getGeometry()->pageSize;
+    }
 }
 
 void flashfsEraseCompletely()
@@ -148,6 +154,8 @@ static uint32_t flashfsTransmitBufferUsed()
  */
 static uint32_t flashfsWriteBuffers(uint8_t const **buffers, uint32_t *bufferSizes, int bufferCount, bool sync)
 {
+    const flashGeometry_t *geometry = m25p16_getGeometry();
+
     uint32_t bytesTotal = 0;
 
     int i;
@@ -170,8 +178,8 @@ static uint32_t flashfsWriteBuffers(uint8_t const **buffers, uint32_t *bufferSiz
          * Each page needs to be saved in a separate program operation, so
          * if we would cross a page boundary, only write up to the boundary in this iteration:
          */
-        if (tailAddress % M25P16_PAGESIZE + bytesTotalRemaining > M25P16_PAGESIZE) {
-            bytesTotalThisIteration = M25P16_PAGESIZE - tailAddress % M25P16_PAGESIZE;
+        if (tailIndexInPage + bytesTotalRemaining > geometry->pageSize) {
+            bytesTotalThisIteration = geometry->pageSize - tailIndexInPage;
         } else {
             bytesTotalThisIteration = bytesTotalRemaining;
         }
@@ -481,7 +489,7 @@ int flashfsIdentifyStartOfFreeSpace()
         /* We can choose whatever power of 2 size we like, which determines how much wastage of free space we'll have
          * at the end of the last written data. But smaller blocksizes will require more searching.
          */
-        FREE_BLOCK_SIZE = 2048,
+        FREE_BLOCK_SIZE = 65536,
 
         /* We don't expect valid data to ever contain this many consecutive uint32_t's of all 1 bits: */
         FREE_BLOCK_TEST_SIZE_INTS = 4, // i.e. 16 bytes
@@ -493,20 +501,16 @@ int flashfsIdentifyStartOfFreeSpace()
         uint32_t ints[FREE_BLOCK_TEST_SIZE_INTS];
     } testBuffer;
 
-    int left = 0; // Smallest block index in the search region
-    int right = flashfsGetSize() / FREE_BLOCK_SIZE; // One past the largest block index in the search region
-    int mid;
-    int result = right;
+    int left = 0;
+    int right = flashfsGetSize() / FREE_BLOCK_SIZE;
+    int mid, result = right;
     int i;
     bool blockErased;
 
     while (left < right) {
         mid = (left + right) / 2;
 
-        if (m25p16_readBytes(mid * FREE_BLOCK_SIZE, testBuffer.bytes, FREE_BLOCK_TEST_SIZE_BYTES) < FREE_BLOCK_TEST_SIZE_BYTES) {
-            // Unexpected timeout from flash, so bail early (reporting the device fuller than it really is)
-            break;
-        }
+        m25p16_readBytes(mid * FREE_BLOCK_SIZE, testBuffer.bytes, FREE_BLOCK_TEST_SIZE_BYTES);
 
         // Checking the buffer 4 bytes at a time like this is probably faster than byte-by-byte, but I didn't benchmark it :)
         blockErased = true;

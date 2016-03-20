@@ -45,6 +45,7 @@
 #include "sensors/compass.h"
 #include "sensors/acceleration.h"
 #include "sensors/barometer.h"
+#include "sensors/pitotmeter.h"
 #include "sensors/gyro.h"
 #include "sensors/battery.h"
 
@@ -242,12 +243,9 @@ static const blackboxSimpleFieldDefinition_t blackboxGpsHFields[] = {
 
 // Rarely-updated fields
 static const blackboxSimpleFieldDefinition_t blackboxSlowFields[] = {
-    {"flightModeFlags",       -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
-    {"stateFlags",            -1, UNSIGNED, PREDICT(0),      ENCODING(UNSIGNED_VB)},
-
-    {"failsafePhase",         -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)},
-    {"rxSignalReceived",      -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)},
-    {"rxFlightChannelsValid", -1, UNSIGNED, PREDICT(0),      ENCODING(TAG2_3S32)}
+    {"flightModeFlags",   -1, UNSIGNED, PREDICT(0),          ENCODING(UNSIGNED_VB)},
+    {"stateFlags",        -1, UNSIGNED, PREDICT(0),          ENCODING(UNSIGNED_VB)},
+    {"failsafePhase",     -1, UNSIGNED, PREDICT(0),          ENCODING(UNSIGNED_VB)}
 };
 
 typedef enum BlackboxState {
@@ -259,7 +257,6 @@ typedef enum BlackboxState {
     BLACKBOX_STATE_SEND_GPS_G_HEADER,
     BLACKBOX_STATE_SEND_SLOW_HEADER,
     BLACKBOX_STATE_SEND_SYSINFO,
-    BLACKBOX_STATE_PAUSED,
     BLACKBOX_STATE_RUNNING,
     BLACKBOX_STATE_SHUTTING_DOWN
 } BlackboxState;
@@ -300,8 +297,6 @@ typedef struct blackboxSlowState_t {
     uint16_t flightModeFlags;
     uint8_t stateFlags;
     uint8_t failsafePhase;
-    bool rxSignalReceived;
-    bool rxFlightChannelsValid;
 } __attribute__((__packed__)) blackboxSlowState_t; // We pack this struct so that padding doesn't interfere with memcmp()
 
 //From mixer.c:
@@ -355,12 +350,6 @@ static blackboxMainState_t blackboxHistoryRing[3];
 // These point into blackboxHistoryRing, use them to know where to store history of a given age (0, 1 or 2 generations old)
 static blackboxMainState_t* blackboxHistory[3];
 
-static bool blackboxModeActivationConditionPresent = false;
-
-static bool blackboxIsOnlyLoggingIntraframes() {
-    return masterConfig.blackbox_rate_num == 1 && masterConfig.blackbox_rate_denom == 32;
-}
-
 static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
 {
     switch (condition) {
@@ -378,7 +367,7 @@ static bool testBlackboxConditionUncached(FlightLogFieldCondition condition)
             return motorCount >= condition - FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_1 + 1;
         
         case FLIGHT_LOG_FIELD_CONDITION_TRICOPTER:
-            return masterConfig.mixerMode == MIXER_TRI || masterConfig.mixerMode == MIXER_CUSTOM_TRI;
+            return masterConfig.mixerMode == MIXER_TRI;
 
         case FLIGHT_LOG_FIELD_CONDITION_NONZERO_PID_D_0:
         case FLIGHT_LOG_FIELD_CONDITION_NONZERO_PID_D_1:
@@ -466,6 +455,9 @@ static void blackboxSetState(BlackboxState newState)
             xmitState.headerIndex = 0;
         break;
         case BLACKBOX_STATE_RUNNING:
+            blackboxIteration = 0;
+            blackboxPFrameIndex = 0;
+            blackboxIFrameIndex = 0;
             blackboxSlowFrameIterationTimer = SLOW_FRAME_INTERVAL; //Force a slow frame to be written on the first iteration
         break;
         case BLACKBOX_STATE_SHUTTING_DOWN:
@@ -488,24 +480,25 @@ static void writeIntraframe(void)
     blackboxWriteUnsignedVB(blackboxIteration);
     blackboxWriteUnsignedVB(blackboxCurrent->time);
 
-    blackboxWriteSignedVBArray(blackboxCurrent->axisPID_P, XYZ_AXIS_COUNT);
-    blackboxWriteSignedVBArray(blackboxCurrent->axisPID_I, XYZ_AXIS_COUNT);
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        blackboxWriteSignedVB(blackboxCurrent->axisPID_P[x]);
+    }
 
-    // Don't bother writing the current D term if the corresponding PID setting is zero
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        blackboxWriteSignedVB(blackboxCurrent->axisPID_I[x]);
+    }
+
     for (x = 0; x < XYZ_AXIS_COUNT; x++) {
         if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_NONZERO_PID_D_0 + x)) {
             blackboxWriteSignedVB(blackboxCurrent->axisPID_D[x]);
         }
     }
 
-    // Write roll, pitch and yaw first:
-    blackboxWriteSigned16VBArray(blackboxCurrent->rcCommand, 3);
+    for (x = 0; x < 3; x++) {
+        blackboxWriteSignedVB(blackboxCurrent->rcCommand[x]);
+    }
 
-    /*
-     * Write the throttle separately from the rest of the RC data so we can apply a predictor to it.
-     * Throttle lies in range [minthrottle..maxthrottle]:
-     */
-    blackboxWriteUnsignedVB(blackboxCurrent->rcCommand[THROTTLE] - masterConfig.escAndServoConfig.minthrottle);
+    blackboxWriteUnsignedVB(blackboxCurrent->rcCommand[3] - masterConfig.escAndServoConfig.minthrottle); //Throttle lies in range [minthrottle..maxthrottle]
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_VBAT)) {
         /*
@@ -524,7 +517,9 @@ static void writeIntraframe(void)
 
 #ifdef MAG
         if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_MAG)) {
-            blackboxWriteSigned16VBArray(blackboxCurrent->magADC, XYZ_AXIS_COUNT);
+            for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+                blackboxWriteSignedVB(blackboxCurrent->magADC[x]);
+            }
         }
 #endif
 
@@ -544,20 +539,24 @@ static void writeIntraframe(void)
         blackboxWriteUnsignedVB(blackboxCurrent->rssi);
     }
 
-    blackboxWriteSigned16VBArray(blackboxCurrent->gyroADC, XYZ_AXIS_COUNT);
-    blackboxWriteSigned16VBArray(blackboxCurrent->accSmooth, XYZ_AXIS_COUNT);
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        blackboxWriteSignedVB(blackboxCurrent->gyroADC[x]);
+    }
+
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        blackboxWriteSignedVB(blackboxCurrent->accSmooth[x]);
+    }
 
     //Motors can be below minthrottle when disarmed, but that doesn't happen much
     blackboxWriteUnsignedVB(blackboxCurrent->motor[0] - masterConfig.escAndServoConfig.minthrottle);
 
-    //Motors tend to be similar to each other so use the first motor's value as a predictor of the others
+    //Motors tend to be similar to each other
     for (x = 1; x < motorCount; x++) {
         blackboxWriteSignedVB(blackboxCurrent->motor[x] - blackboxCurrent->motor[0]);
     }
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_TRICOPTER)) {
-        //Assume the tail spends most of its time around the center
-        blackboxWriteSignedVB(blackboxCurrent->servo[5] - 1500);
+        blackboxWriteSignedVB(blackboxHistory[0]->servo[5] - 1500);
     }
 
     //Rotate our history buffers:
@@ -568,20 +567,6 @@ static void writeIntraframe(void)
     blackboxHistory[2] = blackboxHistory[0];
     //And advance the current state over to a blank space ready to be filled
     blackboxHistory[0] = ((blackboxHistory[0] - blackboxHistoryRing + 1) % 3) + blackboxHistoryRing;
-}
-
-static void blackboxWriteMainStateArrayUsingAveragePredictor(int arrOffsetInHistory, int count)
-{
-    int16_t *curr  = (int16_t*) ((char*) (blackboxHistory[0]) + arrOffsetInHistory);
-    int16_t *prev1 = (int16_t*) ((char*) (blackboxHistory[1]) + arrOffsetInHistory);
-    int16_t *prev2 = (int16_t*) ((char*) (blackboxHistory[2]) + arrOffsetInHistory);
-
-    for (int i = 0; i < count; i++) {
-        // Predictor is the average of the previous two history states
-        int32_t predictor = (prev1[i] + prev2[i]) / 2;
-
-        blackboxWriteSignedVB(curr[i] - predictor);
-    }
 }
 
 static void writeInterframe(void)
@@ -602,14 +587,18 @@ static void writeInterframe(void)
      */
     blackboxWriteSignedVB((int32_t) (blackboxHistory[0]->time - 2 * blackboxHistory[1]->time + blackboxHistory[2]->time));
 
-    arraySubInt32(deltas, blackboxCurrent->axisPID_P, blackboxLast->axisPID_P, XYZ_AXIS_COUNT);
-    blackboxWriteSignedVBArray(deltas, XYZ_AXIS_COUNT);
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        blackboxWriteSignedVB(blackboxCurrent->axisPID_P[x] - blackboxLast->axisPID_P[x]);
+    }
+
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        deltas[x] = blackboxCurrent->axisPID_I[x] - blackboxLast->axisPID_I[x];
+    }
 
     /* 
      * The PID I field changes very slowly, most of the time +-2, so use an encoding
      * that can pack all three fields into one byte in that situation.
      */
-    arraySubInt32(deltas, blackboxCurrent->axisPID_I, blackboxLast->axisPID_I, XYZ_AXIS_COUNT);
     blackboxWriteTag2_3S32(deltas);
     
     /*
@@ -669,10 +658,18 @@ static void writeInterframe(void)
 
     blackboxWriteTag8_8SVB(deltas, optionalFieldCount);
 
-    //Since gyros, accs and motors are noisy, base their predictions on the average of the history:
-    blackboxWriteMainStateArrayUsingAveragePredictor(offsetof(blackboxMainState_t, gyroADC),   XYZ_AXIS_COUNT);
-    blackboxWriteMainStateArrayUsingAveragePredictor(offsetof(blackboxMainState_t, accSmooth), XYZ_AXIS_COUNT);
-    blackboxWriteMainStateArrayUsingAveragePredictor(offsetof(blackboxMainState_t, motor),     motorCount);
+    //Since gyros, accs and motors are noisy, base the prediction on the average of the history:
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        blackboxWriteSignedVB(blackboxHistory[0]->gyroADC[x] - (blackboxHistory[1]->gyroADC[x] + blackboxHistory[2]->gyroADC[x]) / 2);
+    }
+
+    for (x = 0; x < XYZ_AXIS_COUNT; x++) {
+        blackboxWriteSignedVB(blackboxHistory[0]->accSmooth[x] - (blackboxHistory[1]->accSmooth[x] + blackboxHistory[2]->accSmooth[x]) / 2);
+    }
+
+    for (x = 0; x < motorCount; x++) {
+        blackboxWriteSignedVB(blackboxHistory[0]->motor[x] - (blackboxHistory[1]->motor[x] + blackboxHistory[2]->motor[x]) / 2);
+    }
 
     if (testBlackboxCondition(FLIGHT_LOG_FIELD_CONDITION_TRICOPTER)) {
         blackboxWriteSignedVB(blackboxCurrent->servo[5] - blackboxLast->servo[5]);
@@ -688,20 +685,11 @@ static void writeInterframe(void)
  * infrequently, delta updates are not reasonable, so we log independent frames. */
 static void writeSlowFrame(void)
 {
-    int32_t values[3];
-
     blackboxWrite('S');
 
     blackboxWriteUnsignedVB(slowHistory.flightModeFlags);
     blackboxWriteUnsignedVB(slowHistory.stateFlags);
-
-    /*
-     * Most of the time these three values will be able to pack into one byte for us:
-     */
-    values[0] = slowHistory.failsafePhase;
-    values[1] = slowHistory.rxSignalReceived ? 1 : 0;
-    values[2] = slowHistory.rxFlightChannelsValid ? 1 : 0;
-    blackboxWriteTag2_3S32(values);
+    blackboxWriteUnsignedVB(slowHistory.failsafePhase);
 
     blackboxSlowFrameIterationTimer = 0;
 }
@@ -714,8 +702,6 @@ static void loadSlowState(blackboxSlowState_t *slow)
     slow->flightModeFlags = flightModeFlags;
     slow->stateFlags = stateFlags;
     slow->failsafePhase = failsafePhase();
-    slow->rxSignalReceived = rxIsReceivingSignal();
-    slow->rxFlightChannelsValid = rxAreFlightChannelsValid();
 }
 
 /**
@@ -810,12 +796,6 @@ void startBlackbox(void)
          * cache those now.
          */
         blackboxBuildConditionCache();
-        
-        blackboxModeActivationConditionPresent = isModeActivationConditionPresent(currentProfile->modeActivationConditions, BOXBLACKBOX);
-
-        blackboxIteration = 0;
-        blackboxPFrameIndex = 0;
-        blackboxIFrameIndex = 0;
 
         /*
          * Record the beeper's current idea of the last arming beep time, so that we can detect it changing when
@@ -832,7 +812,7 @@ void startBlackbox(void)
  */
 void finishBlackbox(void)
 {
-    if (blackboxState == BLACKBOX_STATE_RUNNING || blackboxState == BLACKBOX_STATE_PAUSED) {
+    if (blackboxState == BLACKBOX_STATE_RUNNING) {
         blackboxLogEvent(FLIGHT_LOG_EVENT_LOG_END, NULL);
 
         blackboxSetState(BLACKBOX_STATE_SHUTTING_DOWN);
@@ -1120,8 +1100,7 @@ static bool blackboxWriteSysinfo()
  */
 void blackboxLogEvent(FlightLogEvent event, flightLogEventData_t *data)
 {
-    // Only allow events to be logged after headers have been written
-    if (!(blackboxState == BLACKBOX_STATE_RUNNING || blackboxState == BLACKBOX_STATE_PAUSED)) {
+    if (blackboxState != BLACKBOX_STATE_RUNNING) {
         return;
     }
 
@@ -1153,19 +1132,6 @@ void blackboxLogEvent(FlightLogEvent event, flightLogEventData_t *data)
             blackboxWrite((uint8_t) data->autotuneTargets.targetAngleAtPeak);
             blackboxWriteS16(data->autotuneTargets.firstPeakAngle);
             blackboxWriteS16(data->autotuneTargets.secondPeakAngle);
-        break;
-        case FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT:
-            if (data->inflightAdjustment.floatFlag) {
-                blackboxWrite(data->inflightAdjustment.adjustmentFunction + FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT_FUNCTION_FLOAT_VALUE_FLAG);
-                blackboxWriteFloat(data->inflightAdjustment.newFloatValue);
-            } else {
-                blackboxWrite(data->inflightAdjustment.adjustmentFunction);
-                blackboxWriteSignedVB(data->inflightAdjustment.newValue);
-            }
-        break;
-        case FLIGHT_LOG_EVENT_LOGGING_RESUME:
-            blackboxWriteUnsignedVB(data->loggingResume.logIteration);
-            blackboxWriteUnsignedVB(data->loggingResume.currentTime);
         break;
         case FLIGHT_LOG_EVENT_LOG_END:
             blackboxPrint("End of log");
@@ -1201,33 +1167,16 @@ static bool blackboxShouldLogPFrame(uint32_t pFrameIndex)
     return (pFrameIndex + masterConfig.blackbox_rate_num - 1) % masterConfig.blackbox_rate_denom < masterConfig.blackbox_rate_num;
 }
 
-static bool blackboxShouldLogIFrame() {
-    return blackboxPFrameIndex == 0;
-}
-
-// Called once every FC loop in order to keep track of how many FC loop iterations have passed
-static void blackboxAdvanceIterationTimers()
-{
-    blackboxSlowFrameIterationTimer++;
-    blackboxIteration++;
-    blackboxPFrameIndex++;
-
-    if (blackboxPFrameIndex == BLACKBOX_I_INTERVAL) {
-        blackboxPFrameIndex = 0;
-        blackboxIFrameIndex++;
-    }
-}
-
 // Called once every FC loop in order to log the current state
 static void blackboxLogIteration()
 {
     // Write a keyframe every BLACKBOX_I_INTERVAL frames so we can resynchronise upon missing frames
-    if (blackboxShouldLogIFrame()) {
+    if (blackboxPFrameIndex == 0) {
         /*
          * Don't log a slow frame if the slow data didn't change ("I" frames are already large enough without adding
-         * an additional item to write at the same time). Unless we're *only* logging "I" frames, then we have no choice.
+         * an additional item to write at the same time)
          */
-        writeSlowFrameIfNeeded(blackboxIsOnlyLoggingIntraframes());
+        writeSlowFrameIfNeeded(false);
 
         loadMainState();
         writeIntraframe();
@@ -1269,6 +1218,15 @@ static void blackboxLogIteration()
 
     //Flush every iteration so that our runtime variance is minimized
     blackboxDeviceFlush();
+
+    blackboxSlowFrameIterationTimer++;
+    blackboxIteration++;
+    blackboxPFrameIndex++;
+
+    if (blackboxPFrameIndex == BLACKBOX_I_INTERVAL) {
+        blackboxPFrameIndex = 0;
+        blackboxIFrameIndex++;
+    }
 }
 
 /**
@@ -1336,44 +1294,13 @@ void handleBlackbox(void)
 
             //Keep writing chunks of the system info headers until it returns true to signal completion
             if (blackboxWriteSysinfo()) {
-
-                /*
-                 * Wait for header buffers to drain completely before data logging begins to ensure reliable header delivery
-                 * (overflowing circular buffers causes all data to be discarded, so the first few logged iterations
-                 * could wipe out the end of the header if we weren't careful)
-                 */
-                if (blackboxDeviceFlush()) {
-                    blackboxSetState(BLACKBOX_STATE_RUNNING);
-                }
-            }
-        break;
-        case BLACKBOX_STATE_PAUSED:
-            // Only allow resume to occur during an I-frame iteration, so that we have an "I" base to work from
-            if (IS_RC_MODE_ACTIVE(BOXBLACKBOX) && blackboxShouldLogIFrame()) {
-                // Write a log entry so the decoder is aware that our large time/iteration skip is intended
-                flightLogEvent_loggingResume_t resume;
-
-                resume.logIteration = blackboxIteration;
-                resume.currentTime = currentTime;
-
-                blackboxLogEvent(FLIGHT_LOG_EVENT_LOGGING_RESUME, (flightLogEventData_t *) &resume);
                 blackboxSetState(BLACKBOX_STATE_RUNNING);
-                
-                blackboxLogIteration();
             }
-
-            // Keep the logging timers ticking so our log iteration continues to advance
-            blackboxAdvanceIterationTimers();
         break;
         case BLACKBOX_STATE_RUNNING:
             // On entry to this state, blackboxIteration, blackboxPFrameIndex and blackboxIFrameIndex are reset to 0
-            if (blackboxModeActivationConditionPresent && !IS_RC_MODE_ACTIVE(BOXBLACKBOX)) {
-                blackboxSetState(BLACKBOX_STATE_PAUSED);
-            } else {
-                blackboxLogIteration();
-            }
 
-            blackboxAdvanceIterationTimers();
+            blackboxLogIteration();
         break;
         case BLACKBOX_STATE_SHUTTING_DOWN:
             //On entry of this state, startTime is set and a flush is performed

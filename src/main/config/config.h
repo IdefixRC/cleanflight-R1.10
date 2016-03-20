@@ -42,8 +42,7 @@ typedef enum {
     FEATURE_LED_STRIP = 1 << 16,
     FEATURE_DISPLAY = 1 << 17,
     FEATURE_ONESHOT125 = 1 << 18,
-    FEATURE_BLACKBOX = 1 << 19,
-    FEATURE_CHANNEL_FORWARDING = 1 << 20
+    FEATURE_BLACKBOX = 1 << 19
 } features_e;
 
 void handleOneshotFeatureChangeOnRestart(void);
@@ -73,4 +72,3 @@ void changeControlRateProfile(uint8_t profileIndex);
 
 bool canSoftwareSerialBeUsed(void);
 
-uint16_t getCurrentMinthrottle(void);

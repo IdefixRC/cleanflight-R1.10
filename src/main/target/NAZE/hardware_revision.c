@@ -101,7 +101,3 @@ void updateHardwareRevision(void)
         hardwareRevision = NAZE32_SP;
 #endif
 }
-
-void spiBusInit(void)
-{
-}

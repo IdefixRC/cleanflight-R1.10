@@ -28,10 +28,8 @@ typedef struct master_t {
     uint16_t looptime;                      // imu loop time in us
     uint8_t emf_avoidance;                   // change pll settings to avoid noise in the uhf band
 
-    motorMixer_t customMotorMixer[MAX_SUPPORTED_MOTORS];
-#ifdef USE_SERVOS
-    servoMixer_t customServoMixer[MAX_SERVO_RULES];
-#endif
+    motorMixer_t customMixer[MAX_SUPPORTED_MOTORS]; // custom mixtable
+
     // motor/esc/servo related stuff
     escAndServoConfig_t escAndServoConfig;
     flight3DConfig_t flight3DConfig;
@@ -53,7 +51,6 @@ typedef struct master_t {
     gyroConfig_t gyroConfig;
 
     uint8_t mag_hardware;                   // Which mag hardware to use on boards with more than one device
-    uint8_t baro_hardware;                  // Barometer hardware to use
 
     uint16_t max_angle_inclination;         // max inclination allowed in angle (level) mode. default 500 (50 degrees).
     flightDynamicsTrims_t accZero;

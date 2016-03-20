@@ -56,18 +56,15 @@
 #define NAZE_SPI_INSTANCE     SPI2
 #define NAZE_SPI_CS_GPIO      GPIOB
 #define NAZE_SPI_CS_PIN       GPIO_Pin_12
-#define NAZE_CS_GPIO_CLK_PERIPHERAL RCC_APB2Periph_GPIOB
 
 // We either have this 16mbit flash chip on SPI or the MPU6500 acc/gyro depending on board revision:
 #define M25P16_CS_GPIO        NAZE_SPI_CS_GPIO
 #define M25P16_CS_PIN         NAZE_SPI_CS_PIN
 #define M25P16_SPI_INSTANCE   NAZE_SPI_INSTANCE
 
-#define MPU6500_CS_GPIO_CLK_PERIPHERAL   NAZE_CS_GPIO_CLK_PERIPHERAL
-#define MPU6500_CS_GPIO                  NAZE_SPI_CS_GPIO
-#define MPU6500_CS_PIN                   NAZE_SPI_CS_PIN
-#define MPU6500_SPI_INSTANCE             NAZE_SPI_INSTANCE
-
+#define MPU6500_CS_GPIO       NAZE_SPI_CS_GPIO
+#define MPU6500_CS_PIN        NAZE_SPI_CS_PIN
+#define MPU6500_SPI_INSTANCE  NAZE_SPI_INSTANCE
 
 #define USE_FLASHFS
 
@@ -83,6 +80,7 @@
 
 #define GYRO
 #define USE_GYRO_MPU3050
+#define MPU3050_BUS I2C_DEVICE_INT
 #define USE_GYRO_MPU6050
 #define USE_GYRO_SPI_MPU6500
 
@@ -93,10 +91,15 @@
 
 #define ACC
 #define USE_ACC_ADXL345
+#define ADXL345_BUS I2C_DEVICE_INT
 #define USE_ACC_BMA280
+#define BMA280_BUS I2C_DEVICE_INT
 #define USE_ACC_MMA8452
+#define MMA8452_BUS I2C_DEVICE_INT
 #define USE_ACC_MPU6050
 #define USE_ACC_SPI_MPU6500
+#define MPU6050_BUS I2C_DEVICE_INT
+#define L3G4200D_BUS I2C_DEVICE_INT
 
 #define ACC_ADXL345_ALIGN CW270_DEG
 #define ACC_MPU6050_ALIGN CW0_DEG
@@ -106,10 +109,13 @@
 
 #define BARO
 #define USE_BARO_MS5611
+#define MS5611_BUS I2C_DEVICE_INT
 #define USE_BARO_BMP085
+#define BMP085_BUS I2C_DEVICE_INT
 
 #define MAG
 #define USE_MAG_HMC5883
+#define HMC5883_BUS I2C_DEVICE_INT
 
 #define MAG_HMC5883_ALIGN CW180_DEG
 
@@ -119,6 +125,7 @@
 #define LED1
 #define INVERTER
 #define DISPLAY
+#define UG2864_BUS I2C_DEVICE_INT
 
 #define USE_USART1
 #define USE_USART2
@@ -143,6 +150,7 @@
 
 #define USE_I2C
 #define I2C_DEVICE (I2CDEV_2)
+#define I2C_DEVICE_INT (I2CDEV_2)
 
 // #define SOFT_I2C // enable to test software i2c
 // #define SOFT_I2C_PB1011 // If SOFT_I2C is enabled above, need to define pinout as well (I2C1 = PB67, I2C2 = PB1011)

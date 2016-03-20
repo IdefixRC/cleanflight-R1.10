@@ -25,32 +25,37 @@ extern "C" {
 
     #include "rx/rx.h"
 
-    uint32_t rcModeActivationMask;
-
     void rxInit(rxConfig_t *rxConfig);
-    void rxResetFlightChannelStatus(void);
-    bool rxHaveValidFlightChannels(void);
-    bool isPulseValid(uint16_t pulseDuration);
-    void rxUpdateFlightChannelStatus(uint8_t channel, uint16_t pulseDuration);
+    void rxCheckPulse(uint8_t channel, uint16_t pulseDuration);
 }
 
 #include "unittest_macros.h"
 #include "gtest/gtest.h"
 
-#define DE_ACTIVATE_ALL_BOXES   0
+enum {
+    COUNTER_FAILSAFE_ON_VALID_DATA_RECEIVED = 0,
+};
+#define CALL_COUNT_ITEM_COUNT 1
+
+static int callCounts[CALL_COUNT_ITEM_COUNT];
+
+#define CALL_COUNTER(item) (callCounts[item])
+
+void resetCallCounters(void) {
+    memset(&callCounts, 0, sizeof(callCounts));
+}
 
 typedef struct testData_s {
     bool isPPMDataBeingReceived;
-    bool isPWMDataBeingReceived;
 } testData_t;
 
 static testData_t testData;
 
-TEST(RxTest, TestValidFlightChannels)
+TEST(RxTest, TestFailsafeInformedOfValidData)
 {
     // given
+    resetCallCounters();
     memset(&testData, 0, sizeof(testData));
-    rcModeActivationMask = DE_ACTIVATE_ALL_BOXES;   // BOXFAILSAFE must be OFF
 
     // and
     rxConfig_t rxConfig;
@@ -62,18 +67,15 @@ TEST(RxTest, TestValidFlightChannels)
     // when
     rxInit(&rxConfig);
 
-    rxResetFlightChannelStatus();
-
     for (uint8_t channelIndex = 0; channelIndex < MAX_SUPPORTED_RC_CHANNEL_COUNT; channelIndex++) {
-        bool validPulse = isPulseValid(1500);
-        rxUpdateFlightChannelStatus(channelIndex, validPulse);
+        rxCheckPulse(channelIndex, 1500);
     }
 
     // then
-    EXPECT_TRUE(rxHaveValidFlightChannels());
+    EXPECT_EQ(1, CALL_COUNTER(COUNTER_FAILSAFE_ON_VALID_DATA_RECEIVED));
 }
 
-TEST(RxTest, TestInvalidFlightChannels)
+TEST(RxTest, TestFailsafeNotInformedOfValidDataWhenStickChannelsAreBad)
 {
     // given
     memset(&testData, 0, sizeof(testData));
@@ -97,38 +99,36 @@ TEST(RxTest, TestInvalidFlightChannels)
     for (uint8_t stickChannelIndex = 0; stickChannelIndex < STICK_CHANNEL_COUNT; stickChannelIndex++) {
 
         // given
-        rxResetFlightChannelStatus();
+        resetCallCounters();
 
-        for (uint8_t otherStickChannelIndex = 0; otherStickChannelIndex < STICK_CHANNEL_COUNT; otherStickChannelIndex++) {
-            channelPulses[otherStickChannelIndex] = rxConfig.rx_min_usec;
+        for (uint8_t channelIndex = 0; channelIndex < STICK_CHANNEL_COUNT; channelIndex++) {
+            channelPulses[stickChannelIndex] = rxConfig.rx_min_usec;
         }
         channelPulses[stickChannelIndex] = rxConfig.rx_min_usec - 1;
 
         // when
         for (uint8_t channelIndex = 0; channelIndex < MAX_SUPPORTED_RC_CHANNEL_COUNT; channelIndex++) {
-            bool validPulse = isPulseValid(channelPulses[channelIndex]);
-            rxUpdateFlightChannelStatus(channelIndex, validPulse);
+            rxCheckPulse(channelIndex, channelPulses[channelIndex]);
         }
 
         // then
-        EXPECT_FALSE(rxHaveValidFlightChannels());
+        EXPECT_EQ(0, CALL_COUNTER(COUNTER_FAILSAFE_ON_VALID_DATA_RECEIVED));
 
         // given
-        rxResetFlightChannelStatus();
+        resetCallCounters();
 
-        for (uint8_t otherStickChannelIndex = 0; otherStickChannelIndex < STICK_CHANNEL_COUNT; otherStickChannelIndex++) {
-            channelPulses[otherStickChannelIndex] = rxConfig.rx_max_usec;
+        for (uint8_t channelIndex = 0; channelIndex < STICK_CHANNEL_COUNT; channelIndex++) {
+            channelPulses[stickChannelIndex] = rxConfig.rx_max_usec;
         }
         channelPulses[stickChannelIndex] = rxConfig.rx_max_usec + 1;
 
         // when
         for (uint8_t channelIndex = 0; channelIndex < MAX_SUPPORTED_RC_CHANNEL_COUNT; channelIndex++) {
-            bool validPulse = isPulseValid(channelPulses[channelIndex]);
-            rxUpdateFlightChannelStatus(channelIndex, validPulse);
+            rxCheckPulse(channelIndex, channelPulses[channelIndex]);
         }
 
         // then
-        EXPECT_FALSE(rxHaveValidFlightChannels());
+        EXPECT_EQ(0, CALL_COUNTER(COUNTER_FAILSAFE_ON_VALID_DATA_RECEIVED));
     }
 }
 
@@ -136,14 +136,10 @@ TEST(RxTest, TestInvalidFlightChannels)
 // STUBS
 
 extern "C" {
-    void failsafeOnValidDataFailed() {}
-    void failsafeOnValidDataReceived() {}
-
-    void failsafeOnRxSuspend(uint32_t ) {}
-    void failsafeOnRxResume(void) {}
-
-    uint32_t micros(void) { return 0; }
-    uint32_t millis(void) { return 0; }
+    void failsafeOnRxCycleStarted() {}
+    void failsafeOnValidDataReceived() {
+        callCounts[COUNTER_FAILSAFE_ON_VALID_DATA_RECEIVED]++;
+    }
 
     bool feature(uint32_t mask) {
         UNUSED(mask);
@@ -154,10 +150,6 @@ extern "C" {
         return testData.isPPMDataBeingReceived;
     }
 
-    bool isPWMDataBeingReceived(void) {
-        return testData.isPWMDataBeingReceived;
-    }
-
     void resetPPMDataReceivedState(void) {}
 
     bool rxMspFrameComplete(void) { return false; }
@@ -165,4 +157,6 @@ extern "C" {
     void rxMspInit(rxConfig_t *, rxRuntimeConfig_t *, rcReadRawDataPtr *) {}
 
     void rxPwmInit(rxRuntimeConfig_t *, rcReadRawDataPtr *) {}
+
+
 }

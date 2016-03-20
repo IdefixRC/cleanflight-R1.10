@@ -36,13 +36,15 @@
 #include "drivers/accgyro_l3gd20.h"
 #include "drivers/accgyro_lsm303dlhc.h"
 
-#include "drivers/bus_spi.h"
 #include "drivers/accgyro_spi_mpu6000.h"
 #include "drivers/accgyro_spi_mpu6500.h"
 
 #include "drivers/barometer.h"
 #include "drivers/barometer_bmp085.h"
 #include "drivers/barometer_ms5611.h"
+
+#include "drivers/pitotmeter.h"
+#include "drivers/pitotmeter_ms4525.h"
 
 #include "drivers/compass.h"
 #include "drivers/compass_hmc5883l.h"
@@ -58,6 +60,7 @@
 #include "sensors/sensors.h"
 #include "sensors/acceleration.h"
 #include "sensors/barometer.h"
+#include "sensors/pitotmeter.h"
 #include "sensors/gyro.h"
 #include "sensors/compass.h"
 #include "sensors/sonar.h"
@@ -72,9 +75,9 @@ extern float magneticDeclination;
 extern gyro_t gyro;
 extern baro_t baro;
 extern acc_t acc;
+extern pitot_t pitot;
 
 uint8_t detectedSensors[MAX_SENSORS_TO_DETECT] = { GYRO_NONE, ACC_NONE, BARO_NONE, MAG_NONE };
-
 
 const mpu6050Config_t *selectMPU6050Config(void)
 {
@@ -125,13 +128,11 @@ const mpu6050Config_t *selectMPU6050Config(void)
 
 #ifdef USE_FAKE_GYRO
 static void fakeGyroInit(void) {}
-static bool fakeGyroRead(int16_t *gyroADC) {
+static void fakeGyroRead(int16_t *gyroADC) {
     memset(gyroADC, 0, sizeof(int16_t[XYZ_AXIS_COUNT]));
-    return true;
 }
-static bool fakeGyroReadTemp(int16_t *tempData) {
+static void fakeGyroReadTemp(int16_t *tempData) {
     UNUSED(tempData);
-    return true;
 }
 
 bool fakeGyroDetect(gyro_t *gyro, uint16_t lpf)
@@ -146,9 +147,8 @@ bool fakeGyroDetect(gyro_t *gyro, uint16_t lpf)
 
 #ifdef USE_FAKE_ACC
 static void fakeAccInit(void) {}
-static bool fakeAccRead(int16_t *accData) {
+static void fakeAccRead(int16_t *accData) {
     memset(accData, 0, sizeof(int16_t[XYZ_AXIS_COUNT]));
-    return true;
 }
 
 bool fakeAccDetect(acc_t *acc)
@@ -230,9 +230,6 @@ bool detectGyro(uint16_t gyroLpf)
 
         case GYRO_SPI_MPU6500:
 #ifdef USE_GYRO_SPI_MPU6500
-#ifdef USE_HARDWARE_REVISION_DETECTION
-		  spiBusInit();
-#endif
 #ifdef NAZE
             if (hardwareRevision == NAZE32_SP && mpu6500SpiGyroDetect(&gyro, gyroLpf)) {
 #ifdef GYRO_SPI_MPU6500_ALIGN
@@ -411,12 +408,12 @@ retry:
     sensorsSet(SENSOR_ACC);
 }
 
-static void detectBaro(baroSensor_e baroHardwareToUse)
+static void detectBaro()
 {
 #ifdef BARO
     // Detect what pressure sensors are available. baro->update() is set to sensor-specific update function
 
-    baroSensor_e baroHardware = baroHardwareToUse;
+    baroSensor_e baroHardware = BARO_DEFAULT;
 
 #ifdef USE_BARO_BMP085
 
@@ -474,6 +471,21 @@ static void detectBaro(baroSensor_e baroHardwareToUse)
 #endif
 }
 
+
+static void detectPitot()
+{
+    // Detect what pressure sensors are available. baro->update() is set to sensor-specific update function
+#ifdef PITOT
+#ifdef USE_PITOT_MS4525
+    if (ms4525Detect(&pitot)) {
+    	return;
+    }
+#endif
+#endif
+    sensorsClear(SENSOR_PITOT);
+}
+
+
 static void detectMag(magSensor_e magHardwareToUse)
 {
     magSensor_e magHardware;
@@ -509,7 +521,26 @@ static void detectMag(magSensor_e magHardwareToUse)
         hmc5883Config = &nazeHmc5883Config_v5;
     }
 #endif
-
+#ifdef ANYFC
+    hmc5883Config_t anyfcHmc5883Config;
+    anyfcHmc5883Config.gpioAHB1Peripherals = RCC_AHB1Periph_GPIOB;
+    anyfcHmc5883Config.gpioPin = Pin_7;
+    anyfcHmc5883Config.gpioPort = GPIOB;
+    hmc5883Config = &anyfcHmc5883Config;
+#endif
+#ifdef COLIBRI
+    hmc5883Config_t colibriHmc5883Config;
+    static const hmc5883Config_t colibriHmc5883Config = {
+		.gpioAHB1Peripherals = RCC_AHB1Periph_GPIOC,
+		.gpioPin = Pin_1,
+		.gpioPort = GPIOC,
+		.exti_port_source = EXTI_PortSourceGPIOC,
+		.exti_pin_source = EXTI_PinSource1,
+		.exti_line = EXTI_Line1,
+		.exti_irqn = EXTI1_IRQn
+	};
+    hmc5883Config = &colibriHmc5883Config;
+#endif
 #ifdef SPRACINGF3
     static const hmc5883Config_t spRacingF3Hmc5883Config = {
         .gpioAHBPeripherals = RCC_AHBPeriph_GPIOC,
@@ -523,7 +554,6 @@ static void detectMag(magSensor_e magHardwareToUse)
 
     hmc5883Config = &spRacingF3Hmc5883Config;
 #endif
-
 #endif
 
 retry:
@@ -553,6 +583,17 @@ retry:
                 magAlign = MAG_AK8975_ALIGN;
 #endif
                 magHardware = MAG_AK8975;
+                break;
+            }
+#endif
+            ; // fallthrough
+        case MAG_NAZA:
+#ifdef USE_MAG_NAZA
+            if (nazaGPSdetect(&mag)) {
+#ifdef MAG_NAZA_ALIGN
+                magAlign = MAG_NAZA_ALIGN;
+#endif
+                magHardware = MAG_NAZA;
                 break;
             }
 #endif
@@ -590,7 +631,7 @@ void reconfigureAlignment(sensorAlignmentConfig_t *sensorAlignmentConfig)
     }
 }
 
-bool sensorsAutodetect(sensorAlignmentConfig_t *sensorAlignmentConfig, uint16_t gyroLpf, uint8_t accHardwareToUse, uint8_t magHardwareToUse, uint8_t baroHardwareToUse, int16_t magDeclinationFromConfig)
+bool sensorsAutodetect(sensorAlignmentConfig_t *sensorAlignmentConfig, uint16_t gyroLpf, uint8_t accHardwareToUse, uint8_t magHardwareToUse, int16_t magDeclinationFromConfig)
 {
     int16_t deg, min;
 
@@ -601,7 +642,8 @@ bool sensorsAutodetect(sensorAlignmentConfig_t *sensorAlignmentConfig, uint16_t 
         return false;
     }
     detectAcc(accHardwareToUse);
-    detectBaro(baroHardwareToUse);
+    detectBaro();
+    detectPitot();
 
 
     // Now time to init things, acc first

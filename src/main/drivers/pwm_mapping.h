@@ -22,7 +22,7 @@
 
 #define MAX_MOTORS  12
 #define MAX_SERVOS  8
-#define MAX_PWM_OUTPUT_PORTS MAX_PWM_MOTORS // must be set to the largest of either MAX_MOTORS or MAX_SERVOS
+#define MAX_PWM_OUTPUT_PORTS (MAX_PWM_MOTORS+MAX_PWM_SERVOS) // must be set to the largest of either MAX_MOTORS or MAX_SERVOS
 
 #if MAX_PWM_OUTPUT_PORTS < MAX_MOTORS || MAX_PWM_OUTPUT_PORTS < MAX_SERVOS
 #error Invalid motor/servo/port configuration
@@ -35,8 +35,6 @@
 
 #define PWM_TIMER_MHZ 1
 #define ONESHOT125_TIMER_MHZ 8
-#define PWM_BRUSHED_TIMER_MHZ 8
-
 
 typedef struct sonarGPIOConfig_s {
     GPIO_TypeDef *gpio;
@@ -56,6 +54,10 @@ typedef struct drv_pwm_config_t {
 #ifdef STM32F303xC
     bool useUART3;
 #endif
+#ifdef STM32F40_41xxx
+    bool useUART2;
+    bool useUART6;
+#endif
     bool useVbat;
     bool useOneshot;
     bool useSoftSerial;
@@ -65,7 +67,7 @@ typedef struct drv_pwm_config_t {
 #endif
 #ifdef USE_SERVOS
     bool useServos;
-    bool useChannelForwarding;    // configure additional channels as servos
+    bool extraServos;    // configure additional 4 channels in PPM mode as servos, not motors
     uint16_t servoPwmRate;
     uint16_t servoCenterPulse;
 #endif

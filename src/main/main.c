@@ -63,6 +63,7 @@
 #include "sensors/sensors.h"
 #include "sensors/sonar.h"
 #include "sensors/barometer.h"
+#include "sensors/pitotmeter.h"
 #include "sensors/compass.h"
 #include "sensors/acceleration.h"
 #include "sensors/gyro.h"
@@ -104,13 +105,9 @@ void telemetryInit(void);
 void serialInit(serialConfig_t *initialSerialConfig, bool softserialEnabled);
 void mspInit(serialConfig_t *serialConfig);
 void cliInit(serialConfig_t *serialConfig);
-void failsafeInit(rxConfig_t *intialRxConfig, uint16_t deadband3d_throttle);
+void failsafeInit(rxConfig_t *intialRxConfig);
 pwmOutputConfiguration_t *pwmInit(drv_pwm_config_t *init);
-#ifdef USE_SERVOS
-void mixerInit(mixerMode_e mixerMode, motorMixer_t *customMotorMixers, servoMixer_t *customServoMixers);
-#else
-void mixerInit(mixerMode_e mixerMode, motorMixer_t *customMotorMixers);
-#endif
+void mixerInit(mixerMode_e mixerMode, motorMixer_t *customMixers);
 void mixerUsePWMOutputConfiguration(pwmOutputConfiguration_t *pwmOutputConfiguration);
 void rxInit(rxConfig_t *rxConfig);
 void gpsInit(serialConfig_t *serialConfig, gpsConfig_t *initialGpsConfig);
@@ -130,6 +127,10 @@ void SetSysClock(void);
 #ifdef STM32F10X
 // from system_stm32f10x.c
 void SetSysClock(bool overclock);
+#endif
+#ifdef STM32F40_41xxx
+// from system_stm32f4xx.c
+void SetSysClock(void);
 #endif
 
 typedef enum {
@@ -169,6 +170,9 @@ void init(void)
     // Configure the Flash Latency cycles and enable prefetch buffer
     SetSysClock(masterConfig.emf_avoidance);
 #endif
+#ifdef STM32F40_41xxx
+    SetSysClock();
+#endif
 
 #ifdef USE_HARDWARE_REVISION_DETECTION
     detectHardwareRevision();
@@ -201,11 +205,7 @@ void init(void)
 
     serialInit(&masterConfig.serialConfig, feature(FEATURE_SOFTSERIAL));
 
-#ifdef USE_SERVOS
-    mixerInit(masterConfig.mixerMode, masterConfig.customMotorMixer, masterConfig.customServoMixer);
-#else
-    mixerInit(masterConfig.mixerMode, masterConfig.customMotorMixer);
-#endif
+    mixerInit(masterConfig.mixerMode, masterConfig.customMixer);
 
     memset(&pwm_params, 0, sizeof(pwm_params));
 
@@ -224,7 +224,7 @@ void init(void)
 #endif
 
     // when using airplane/wing mixer, servo/motor outputs are remapped
-    if (masterConfig.mixerMode == MIXER_AIRPLANE || masterConfig.mixerMode == MIXER_FLYING_WING || masterConfig.mixerMode == MIXER_CUSTOM_AIRPLANE)
+    if (masterConfig.mixerMode == MIXER_AIRPLANE || masterConfig.mixerMode == MIXER_FLYING_WING)
         pwm_params.airplane = true;
     else
         pwm_params.airplane = false;
@@ -233,6 +233,12 @@ void init(void)
 #endif
 #ifdef STM32F303xC
     pwm_params.useUART3 = doesConfigurationUsePort(SERIAL_PORT_USART3);
+#endif
+#if defined(USE_USART2) && defined(STM32F40_41xxx)
+    pwm_params.useUART2 = doesConfigurationUsePort(SERIAL_PORT_USART2);
+#endif
+#if defined(USE_USART6) && defined(STM32F40_41xxx)
+    pwm_params.useUART6 = doesConfigurationUsePort(SERIAL_PORT_USART6);
 #endif
     pwm_params.useVbat = feature(FEATURE_VBAT);
     pwm_params.useSoftSerial = feature(FEATURE_SOFTSERIAL);
@@ -249,7 +255,7 @@ void init(void)
 
 #ifdef USE_SERVOS
     pwm_params.useServos = isMixerUsingServos();
-    pwm_params.useChannelForwarding = feature(FEATURE_CHANNEL_FORWARDING);
+    pwm_params.extraServos = currentProfile->gimbalConfig.gimbal_flags & GIMBAL_FORWARDAUX;
     pwm_params.servoCenterPulse = masterConfig.escAndServoConfig.servoCenterPulse;
     pwm_params.servoPwmRate = masterConfig.servo_pwm_rate;
 #endif
@@ -305,6 +311,7 @@ void init(void)
 #ifdef USE_SPI
     spiInit(SPI1);
     spiInit(SPI2);
+    spiInit(SPI3);
 #endif
 
 #ifdef USE_HARDWARE_REVISION_DETECTION
@@ -340,7 +347,14 @@ void init(void)
         i2cInit(I2C_DEVICE);
     }
 #else
-    i2cInit(I2C_DEVICE);
+#if defined(ANYFC) || defined(COLIBRI) || defined(REVO)
+    i2cInit(I2C_DEVICE_INT);
+    if (!doesConfigurationUsePort(SERIAL_PORT_USART3)) {
+#ifdef I2C_DEVICE_EXT
+        i2cInit(I2C_DEVICE_EXT);
+#endif
+    }
+#endif
 #endif
 #endif
 
@@ -371,9 +385,9 @@ void init(void)
     }
 #endif
 
-    if (!sensorsAutodetect(&masterConfig.sensorAlignmentConfig, masterConfig.gyro_lpf, masterConfig.acc_hardware, masterConfig.mag_hardware, masterConfig.baro_hardware, currentProfile->mag_declination)) {
+    if (!sensorsAutodetect(&masterConfig.sensorAlignmentConfig, masterConfig.gyro_lpf, masterConfig.acc_hardware, masterConfig.mag_hardware, currentProfile->mag_declination)) {
         // if gyro was not detected due to whatever reason, we give up now.
-        failureMode(FAILURE_MISSING_ACC);
+        failureMode(3);
     }
 
     systemState |= SYSTEM_STATE_SENSORS_READY;
@@ -404,7 +418,7 @@ void init(void)
     cliInit(&masterConfig.serialConfig);
 #endif
 
-    failsafeInit(&masterConfig.rxConfig, masterConfig.flight3DConfig.deadband3d_throttle);
+    failsafeInit(&masterConfig.rxConfig);
 
     rxInit(&masterConfig.rxConfig);
 
@@ -431,7 +445,13 @@ void init(void)
     ledStripInit(masterConfig.ledConfigs, masterConfig.colors);
 
     if (feature(FEATURE_LED_STRIP)) {
+#ifdef COLIBRI
+        if (!doesConfigurationUsePort(SERIAL_PORT_USART1)) {
+            ledStripEnable();
+        }
+#else
         ledStripEnable();
+#endif
     }
 #endif
 
@@ -446,10 +466,10 @@ void init(void)
     if (hardwareRevision == NAZE32_REV5) {
         m25p16_init();
     }
-#elif defined(USE_FLASH_M25P16)
+#endif
+#if defined(SPRACINGF3) || defined(CC3D) || defined(COLIBRI) || defined(REVO)
     m25p16_init();
 #endif
-
     flashfsInit();
 #endif
 
