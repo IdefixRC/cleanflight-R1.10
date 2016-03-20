@@ -32,6 +32,10 @@ static volatile uint16_t spi2ErrorCount = 0;
 static volatile uint16_t spi3ErrorCount = 0;
 #endif
 
+#ifdef STM32F40_41xxx
+static volatile uint16_t spi3ErrorCount = 0;
+#endif
+
 #ifdef USE_SPI_DEVICE_1
 
 #ifndef SPI1_GPIO
@@ -111,6 +115,39 @@ void initSpi1(void)
     gpio.mode = Mode_Out_PP;
     gpioInit(GPIOA, &gpio);
 #endif
+#endif
+
+#ifdef STM32F40_41xxx
+    // Specific to the STM32F405
+    // SPI1 Driver
+    // PA7    17    SPI1_MOSI
+    // PA6    16    SPI1_MISO
+    // PA5    15    SPI1_SCK
+    // PA4    14    SPI1_NSS
+
+    gpio_config_t gpio;
+
+    // MOSI + SCK as output
+    gpio.mode = Mode_AF_PP;
+    gpio.pin = Pin_7 | Pin_5;
+    gpio.speed = Speed_50MHz;
+    gpioInit(GPIOA, &gpio);
+    // MISO as input
+    gpio.pin = Pin_6;
+    gpio.mode = Mode_AF_PP;
+    gpioInit(GPIOA, &gpio);
+
+#ifdef COLIBRI
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+    // NSS as gpio slave select
+    gpio.pin = Pin_4;
+    gpio.mode = Mode_Out_PP;
+    gpioInit(GPIOC, &gpio);
+#endif
+
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource5, GPIO_AF_SPI1);
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource6, GPIO_AF_SPI1);
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource7, GPIO_AF_SPI1);
 #endif
 
     // Init SPI hardware
@@ -218,6 +255,45 @@ void initSpi2(void)
     gpioInit(SPI2_GPIO, &gpio);
 #endif
 #endif
+#ifdef STM32F40_41xxx
+    // Specific to the STM32F405
+    // SPI2 Driver
+    // PC3    17    SPI2_MOSI
+    // PC2    16    SPI2_MISO
+    // PB13    15    SPI2_SCK
+    // PB12    14    SPI2_NSS
+
+    gpio_config_t gpio;
+
+    // MOSI + SCK as output
+    gpio.mode = Mode_AF_PP;
+    gpio.pin = Pin_3;
+    gpio.speed = Speed_50MHz;
+    gpioInit(GPIOC, &gpio);
+
+    // MOSI + SCK as output
+    gpio.mode = Mode_AF_PP;
+    gpio.pin = Pin_13;
+    gpio.speed = Speed_50MHz;
+    gpioInit(GPIOB, &gpio);
+
+    // MISO as input
+    gpio.pin = Pin_2;
+    gpio.mode = Mode_AF_PP;
+    gpioInit(GPIOC, &gpio);
+
+#ifdef COLIBRI
+    RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+    // NSS as gpio slave select
+    gpio.pin = Pin_12;
+    gpio.mode = Mode_Out_PP;
+    gpioInit(GPIOB, &gpio);
+#endif
+
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource13, GPIO_AF_SPI2);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource2, GPIO_AF_SPI2);
+    GPIO_PinAFConfig(GPIOC, GPIO_PinSource3, GPIO_AF_SPI2);
+#endif
 
     // Init SPI2 hardware
     SPI_I2S_DeInit(SPI2);
@@ -298,6 +374,9 @@ uint8_t spiTransferByte(SPI_TypeDef *instance, uint8_t data)
 #ifdef STM32F10X
     SPI_I2S_SendData(instance, data);
 #endif
+#ifdef STM32F40_41xxx
+    SPI_I2S_SendData(instance, data);
+#endif
     spiTimeout = 1000;
     while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_RXNE) == RESET)
         if ((spiTimeout--) == 0)
@@ -307,6 +386,9 @@ uint8_t spiTransferByte(SPI_TypeDef *instance, uint8_t data)
     return ((uint8_t)SPI_ReceiveData8(instance));
 #endif
 #ifdef STM32F10X
+    return ((uint8_t)SPI_I2S_ReceiveData(instance));
+#endif
+#ifdef STM32F40_41xxx
     return ((uint8_t)SPI_I2S_ReceiveData(instance));
 #endif
 }
@@ -330,6 +412,9 @@ bool spiTransfer(SPI_TypeDef *instance, uint8_t *out, const uint8_t *in, int len
 #ifdef STM32F10X
         SPI_I2S_SendData(instance, b);
 #endif
+#ifdef STM32F40_41xxx
+        SPI_I2S_SendData(instance, b);
+#endif
         while (SPI_I2S_GetFlagStatus(instance, SPI_I2S_FLAG_RXNE) == RESET) {
             if ((spiTimeout--) == 0)
                 return spiTimeoutUserCallback(instance);
@@ -339,6 +424,9 @@ bool spiTransfer(SPI_TypeDef *instance, uint8_t *out, const uint8_t *in, int len
         //b = SPI_I2S_ReceiveData16(instance);
 #endif
 #ifdef STM32F10X
+        b = SPI_I2S_ReceiveData(instance);
+#endif
+#ifdef STM32F40_41xxx
         b = SPI_I2S_ReceiveData(instance);
 #endif
         if (out)
