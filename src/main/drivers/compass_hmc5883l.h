@@ -24,6 +24,9 @@ typedef struct hmc5883Config_s {
 #ifdef STM32F10X
     uint32_t gpioAPB2Peripherals;
 #endif
+#ifdef STM32F40_41xxx
+    uint32_t gpioAHB1Peripherals;
+#endif
     uint16_t gpioPin;
     GPIO_TypeDef *gpioPort;
 
