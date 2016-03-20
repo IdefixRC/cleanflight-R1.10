@@ -22,6 +22,8 @@
  * Hamasaki/Timecop - Initial baseflight code
 */
 
+// New - to be checked
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
