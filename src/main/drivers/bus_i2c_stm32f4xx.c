@@ -15,6 +15,8 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+// Uses I2CDevice bus code.....need to be checked
+
 #include <stdbool.h>
 #include <stdint.h>
 
