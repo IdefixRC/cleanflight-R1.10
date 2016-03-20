@@ -38,7 +38,7 @@ FLASH_SIZE ?=
 
 FORKNAME			 = cleanflight
 
-VALID_TARGETS	 = NAZE NAZE32PRO OLIMEXINO STM32F3DISCOVERY CHEBUZZF3 CC3D CJMCU EUSTM32F103RC SPRACINGF3 PORT103R SPARKY ALIENWIIF1 ALIENWIIF3 COLIBRI_RACE
+VALID_TARGETS	 = NAZE NAZE32PRO OLIMEXINO STM32F3DISCOVERY CHEBUZZF3 CC3D CJMCU EUSTM32F103RC SPRACINGF3 PORT103R SPARKY ALIENWIIF1 ALIENWIIF3 COLIBRI_RACE COLIBRI
 
 # Valid targets for OP BootLoader support
 OPBL_VALID_TARGETS = CC3D
@@ -49,7 +49,7 @@ ifeq ($(TARGET),$(filter $(TARGET),CJMCU))
 FLASH_SIZE = 64
 else ifeq ($(TARGET),$(filter $(TARGET),NAZE CC3D ALIENWIIF1 OLIMEXINO))
 FLASH_SIZE = 128
-else ifeq ($(TARGET),$(filter $(TARGET),EUSTM32F103RC PORT103R STM32F3DISCOVERY CHEBUZZF3 NAZE32PRO SPRACINGF3 SPARKY ALIENWIIF3 COLIBRI_RACE))
+else ifeq ($(TARGET),$(filter $(TARGET),EUSTM32F103RC PORT103R STM32F3DISCOVERY CHEBUZZF3 NAZE32PRO SPRACINGF3 SPARKY ALIENWIIF3 COLIBRI_RACE COLIBRI))
 FLASH_SIZE = 256
 else
 $(error FLASH_SIZE not configured for target)
@@ -285,6 +285,13 @@ VCP_SRC	 = \
 		   vcp/usb_istr.c \
 		   vcp/usb_prop.c \
 		   vcp/usb_pwr.c \
+# Additional folders for TBS Colibri F4 FC
+VCPF4_SRC	 = \
+		   vcpf4/stm32f4xx_it.c \
+		   vcpf4/usb_bsp.c \
+		   vcpf4/usbd_desc.c \
+		   vcpf4/usbd_usr.c \
+		   vcpf4/usbd_cdc_vcp.c \
 		   drivers/serial_usb_vcp.c
 
 NAZE_SRC	 = startup_stm32f10x_md_gcc.S \
@@ -459,6 +466,36 @@ CC3D_SRC	 = \
 		   $(HIGHEND_SRC) \
 		   $(COMMON_SRC) \
 		   $(VCP_SRC)
+# Additional code for TBS Colibri Target
+COLIBRI_SRC = startup_stm32f40xx.s \
+		   drivers/accgyro_spi_mpu6000.c \
+		   drivers/barometer_ms5611.c \
+		  
+		   drivers/compass_hmc5883l.c \
+		   drivers/adc.c \
+		   drivers/adc_stm32f4xx.c \
+		   drivers/bus_i2c_stm32f4xx.c \
+		   drivers/bus_spi.c \
+		   drivers/gpio_stm32f4xx.c \
+		   drivers/inverter.c \
+		   drivers/light_led_stm32f4xx.c \
+		   drivers/light_ws2811strip.c \
+		   drivers/light_ws2811strip_stm32f4xx.c \
+		   drivers/pwm_mapping.c \
+		   drivers/pwm_output.c \
+		   drivers/pwm_rx.c \
+		   drivers/serial_softserial.c \
+		   drivers/serial_uart.c \
+		   drivers/serial_uart_stm32f4xx.c \
+		   drivers/sound_beeper_stm32f4xx.c \
+		   drivers/system_stm32f4xx.c \
+		   drivers/timer.c \
+		   drivers/timer_stm32f4xx.c \
+		   drivers/flash_m25p16.c \
+		   io/flashfs.c \
+		   $(HIGHEND_SRC) \
+		   $(COMMON_SRC) \
+		   $(VCPF4_SRC)
 
 STM32F30x_COMMON_SRC	 = \
 		   startup_stm32f30x_md_gcc.S \
