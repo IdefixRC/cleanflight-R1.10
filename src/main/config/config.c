@@ -76,6 +76,7 @@
 void useRcControlsConfig(modeActivationCondition_t *modeActivationConditions, escAndServoConfig_t *escAndServoConfigToUse, pidProfile_t *pidProfileToUse);
 
 #define FLASH_TO_RESERVE_FOR_CONFIG 0x800
+* required for Colibri? #define FLASH_TO_RESERVE_FOR_CONFIG 0x1000
 
 #if !defined(FLASH_SIZE)
 #error "Flash size not defined for target. (specify in KB)"
@@ -94,6 +95,11 @@ void useRcControlsConfig(modeActivationCondition_t *modeActivationConditions, es
     #ifdef STM32F10X_HD
         #define FLASH_PAGE_SIZE                 ((uint16_t)0x800)
     #endif
+
+    #ifdef STM32F40_41xxx
+        #define FLASH_PAGE_SIZE                 ((uint32_t)0x20000)
+    #endif
+	
 #endif
 
 #if !defined(FLASH_SIZE) && !defined(FLASH_PAGE_COUNT)
@@ -107,7 +113,13 @@ void useRcControlsConfig(modeActivationCondition_t *modeActivationConditions, es
 #endif
 
 #if defined(FLASH_SIZE)
-#define FLASH_PAGE_COUNT ((FLASH_SIZE * 0x400) / FLASH_PAGE_SIZE)
+
+#ifdef STM32F40_41xxx
+    #define FLASH_PAGE_COUNT 8 // just to make calculations work
+
+#else
+	#define FLASH_PAGE_COUNT ((FLASH_SIZE * 0x400) / FLASH_PAGE_SIZE)
+#endif
 #endif
 
 #if !defined(FLASH_PAGE_SIZE)
@@ -901,7 +913,13 @@ void writeEEPROM(void)
 #endif
         for (wordOffset = 0; wordOffset < sizeof(master_t); wordOffset += 4) {
             if (wordOffset % FLASH_PAGE_SIZE == 0) {
+
+#ifdef STM32F40_41xxx
+            	status = FLASH_EraseSector(FLASH_Sector_11, VoltageRange_3);
+#else
                 status = FLASH_ErasePage(CONFIG_START_FLASH_ADDRESS + wordOffset);
+
+#endif
                 if (status != FLASH_COMPLETE) {
                     break;
                 }
