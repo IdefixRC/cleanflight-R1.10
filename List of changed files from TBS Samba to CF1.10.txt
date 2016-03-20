@@ -1,0 +1,45 @@
+- makefile
+- fake_travis_build.sh (required??)
+- travis.yml
+- lib
+	-main
+		-all STM32F4 Libs added
+		- STM32-USB-FS-Device Driver
+			- USB_regs.h 		(unit16_t is different - relevant?)
+- src
+	- main.c
+	- platform.h
+	
+	-main
+		- config
+			- config.c (flash reseve 0x1000 - old 0x800. required??)
+		-drivers
+			- accgyro_spi_mpu6000.c
+			- gpio.h
+			- flash_m25p16.c
+			- compass_hmc_58831.h		
+			- compass_hmc_58831.c
+			- bus_spi.h
+			- bus_spi.c
+			- bus_i2c.h
+			- inverter.c
+			- nvic.h
+			- pwm_mapping.c
+			- pwm_mapping.h
+			- serial_uart.c
+			- serial_uart.h
+			- serial_uart_impl.h
+			- serial_uart_stmf4.c	(needs to be checked)
+			- serial_usb_vpc.c
+			- system.c
+			- timer.c
+			- timer.h
+		-io
+			-serial.c
+			-serial.h
+		-sensors	
+			- initialization.c
+		-Target
+			-Colibri 		(folder added)
+		- VCPF4				(folder added)
+
