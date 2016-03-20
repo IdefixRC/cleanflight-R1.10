@@ -510,6 +510,19 @@ static void detectMag(magSensor_e magHardwareToUse)
     }
 #endif
 
+#ifdef COLIBRI
+    hmc5883Config_t colibriHmc5883Config;
+    static const hmc5883Config_t colibriHmc5883Config = {
+		.gpioAHB1Peripherals = RCC_AHB1Periph_GPIOC,
+		.gpioPin = Pin_1,
+		.gpioPort = GPIOC,
+		.exti_port_source = EXTI_PortSourceGPIOC,
+		.exti_pin_source = EXTI_PinSource1,
+		.exti_line = EXTI_Line1,
+		.exti_irqn = EXTI1_IRQn
+	};
+    hmc5883Config = &colibriHmc5883Config;
+#endif
 #ifdef SPRACINGF3
     static const hmc5883Config_t spRacingF3Hmc5883Config = {
         .gpioAHBPeripherals = RCC_AHBPeriph_GPIOC,
